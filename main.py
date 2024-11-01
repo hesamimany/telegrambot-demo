@@ -7,6 +7,7 @@ import io
 
 from aiogram import Bot, Dispatcher, types, Router
 from aiogram.filters import Command
+from aiogram.client.session.aiohttp import AiohttpSession
 from dotenv import load_dotenv
 import boto3
 from botocore.exceptions import NoCredentialsError
@@ -34,7 +35,8 @@ s3 = boto3.client(
 )
 
 # Initialize Bot and Dispatcher
-bot = Bot(token=BOT_TOKEN)
+session = AiohttpSession()
+bot = Bot(token=BOT_TOKEN, session=session)
 dp = Dispatcher()
 router = Router()
 dp.include_router(router)
@@ -101,9 +103,10 @@ async def handle_document(message: types.Message):
         # Get file path from Telegram
         file = await bot.get_file(file_id)
         file_path = file.file_path
+        url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_path}"
 
         # Download the file in chunks with progress tracking
-        async with bot.session.get(f'https://api.telegram.org/file/bot{BOT_TOKEN}/{file_path}') as response:
+        async with bot.session.make_request("GET", url) as response:
             response.raise_for_status()
             while chunk := await response.content.read(chunk_size):
                 file_buffer.write(chunk)
