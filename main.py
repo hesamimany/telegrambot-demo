@@ -3,13 +3,14 @@ import os
 import uuid
 import asyncio
 import logging
-import io
+import json
 from datetime import datetime, timedelta
 
 from aiogram import Bot, Dispatcher, types, Router
 from aiogram.filters import Command
 from aiogram.client.session.aiohttp import AiohttpSession
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from dotenv import load_dotenv
 import boto3
 from botocore.exceptions import NoCredentialsError
@@ -66,21 +67,19 @@ class FileRecord(Base):
 Base.metadata.create_all(engine)
 
 # Define the inline keyboard
-def main_menu_keyboard():
+def main_menu_keyboard(user_id):
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Show Files", callback_data="show_files")],
-        [InlineKeyboardButton(text="Show Owner (About)", callback_data="show_about")]
+        [InlineKeyboardButton(text="Show Files", callback_data=json.dumps({"action": "show_files", "user_id": user_id}))],
+        [InlineKeyboardButton(text="Show Owner (About)", callback_data=json.dumps({"action": "show_about", "user_id": user_id}))]
     ])
     return keyboard
 
-# Update /start command to show buttons
+# Update your start_handler to pass the user_id to the keyboard
 @router.message(Command("start"))
 async def start_handler(message: types.Message):
+    user_id = message.from_user.id
     logger.info("Received /start command.")
-    await message.answer(
-        "Welcome! Use the buttons below to access various functions.",
-        reply_markup=main_menu_keyboard()
-    )
+    await message.answer("Choose an option:", reply_markup=main_menu_keyboard(user_id))
 
 # Implement the /help command
 @router.message(Command("help"))
@@ -91,18 +90,23 @@ async def help_handler(message: types.Message):
         "/about - Information about this bot"
     )
 
-# Implement /about command
-@router.message(Command("about"))
-async def about_handler(message: types.Message):
-    await message.answer("This bot allows users to upload files, get temporary download links, and view uploaded files.")
+# Specific handler to show about info
+async def about_handler(callback_query: CallbackQuery):
+    # Show owner information
+    await callback_query.message.answer("This bot is created by @xX_Hes_Xx")  # Add relevant info here
 
-# Handle button clicks
-@router.callback_query(lambda call: call.data in ["show_files", "show_about"])
-async def callback_handler(callback_query: types.CallbackQuery):
-    if callback_query.data == "show_files":
-        await files_handler(callback_query.message)
-    elif callback_query.data == "show_about":
-        await about_handler(callback_query.message)
+# Main callback handler to route actions
+@router.callback_query()
+async def callback_handler(callback_query: CallbackQuery):
+    data = json.loads(callback_query.data)
+    action = data.get("action")
+    user_id = data.get("user_id")
+
+    if action == "show_files":
+        await files_handler(callback_query, user_id)
+    elif action == "show_about":
+        await about_handler(callback_query)
+
     await callback_query.answer()  # Acknowledge the callback
 
 
