@@ -142,76 +142,24 @@ async def schedule_deletion(bucket_name, file_key, delay_seconds):
     except Exception as e:
         logger.error(f"Error deleting file {file_key}: {e}")
 
+# /files command handler
 @router.message(Command("files"))
-async def files_handler(message: types.Message):
-    user_id = message.from_user.id
+async def files_handler(callback_query: CallbackQuery, user_id):
+
     my_session = Session()
     files = my_session.query(FileRecord).filter_by(user_id=user_id).all()
-    my_session.close()
 
     if not files:
-        await message.answer("You have no uploaded files.")
+        await callback_query.message.answer("You have no uploaded files.")
     else:
-        # Generate an inline keyboard with file names as buttons
-        keyboard = InlineKeyboardMarkup()
+        response = "Your uploaded files:\n\n"
         for file in files:
-            button = InlineKeyboardButton(
-                text=file.file_name,
-                callback_data=f"show_file_{file.id}"
-            )
-            keyboard.add(button)
+            expiration = format_local_time(file.expiration_time)
+            response += f"File: {file.file_name}\nLink: {file.download_link}\nExpires: {expiration}\n\n"
+        await callback_query.message.answer(response)
 
-        await message.answer("Your uploaded files:", reply_markup=keyboard)
-
-# Callback handler to show file details
-@router.callback_query(lambda call: call.data.startswith("show_file_"))
-async def show_file_details(call: CallbackQuery):
-    file_id = int(call.data.split("_")[-1])  # Extract file ID from callback data
-
-    my_session = Session()
-    file_record = my_session.query(FileRecord).filter_by(id=file_id).first()
     my_session.close()
 
-    if file_record:
-        # Format expiration time to local time
-        expiration = format_local_time(file_record.expiration_time)
-
-        # Generate the file details message
-        file_details = (
-            f"File: {file_record.file_name}\n"
-            f"Download Link: {file_record.download_link}\n"
-            f"Expires: {expiration}"
-        )
-
-        # Inline keyboard with a "Back" button to return to file list
-        back_button = InlineKeyboardButton("Back", callback_data="back_to_files")
-        keyboard = InlineKeyboardMarkup().add(back_button)
-
-        await call.message.edit_text(file_details, reply_markup=keyboard)
-    else:
-        await call.answer("File not found.", show_alert=True)
-
-# Callback handler to go back to the list of files
-@router.callback_query(lambda call: call.data == "back_to_files")
-async def back_to_files(call: CallbackQuery):
-    user_id = call.from_user.id
-    my_session = Session()
-    files = my_session.query(FileRecord).filter_by(user_id=user_id).all()
-    my_session.close()
-
-    if not files:
-        await call.message.edit_text("You have no uploaded files.")
-    else:
-        # Generate the inline keyboard for the file list
-        keyboard = InlineKeyboardMarkup()
-        for file in files:
-            button = InlineKeyboardButton(
-                text=file.file_name,
-                callback_data=f"show_file_{file.id}"
-            )
-            keyboard.add(button)
-
-        await call.message.edit_text("Your uploaded files:", reply_markup=keyboard)
 
 # Handler for receiving files
 @router.message()
