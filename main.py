@@ -4,20 +4,25 @@ import uuid
 import asyncio
 import logging
 import json
-from datetime import datetime, timedelta
+
+from datetime import datetime, timedelta, timezone
+from dotenv import load_dotenv
 
 from aiogram import Bot, Dispatcher, types, Router
 from aiogram.filters import Command
 from aiogram.client.session.aiohttp import AiohttpSession
-
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
-from dotenv import load_dotenv
+
 import boto3
 from botocore.exceptions import NoCredentialsError
 from botocore.client import Config
 from sqlalchemy import create_engine, Column, Integer, String, DateTime
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
+
+
+local_offset = timedelta(hours=3, minutes=30)
+local_timezone = timezone(timedelta(hours=3, minutes=30))
 
 # Load environment variables
 load_dotenv()
@@ -65,6 +70,9 @@ class FileRecord(Base):
 
 
 Base.metadata.create_all(engine)
+
+def format_local_time(utc_datetime):
+    return utc_datetime.astimezone(local_timezone).strftime('%Y-%m-%d %H:%M:%S')
 
 # Define the inline keyboard
 def main_menu_keyboard(user_id):
@@ -146,7 +154,8 @@ async def files_handler(callback_query: CallbackQuery, user_id):
     else:
         response = "Your uploaded files:\n\n"
         for file in files:
-            response += f"File: {file.file_name}\nLink: {file.download_link}\nExpires: {file.expiration_time}\n\n"
+            expiration = format_local_time(file.expiration_time)
+            response += f"File: {file.file_name}\nLink: {file.download_link}\nExpires: {expiration}\n\n"
         await callback_query.message.answer(response)
 
     my_session.close()
@@ -208,7 +217,7 @@ async def handle_document(message: types.Message):
         )
 
         # Store file record in the database
-        expiration_time = datetime.utcnow() + timedelta(hours=1)
+        expiration_time = datetime.now(timezone.utc) + timedelta(hours=1)
         my_session = Session()
         file_record = FileRecord(
             user_id=message.from_user.id,
