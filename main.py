@@ -41,6 +41,15 @@ dp = Dispatcher()
 router = Router()
 dp.include_router(router)
 
+async def schedule_deletion(bucket_name, file_key, delay_seconds):
+    """Schedule deletion of an object after a specified delay."""
+    await asyncio.sleep(delay_seconds)
+    try:
+        obj = s3.Object(bucket_name, file_key)
+        obj.delete()
+        print(f"File {file_key} deleted successfully.")
+    except Exception as e:
+        print(f"Error deleting file {file_key}: {e}")
 
 # Upload progress callback function
 def upload_progress(bytes_transferred, file_size):
@@ -94,11 +103,6 @@ async def handle_document(message: types.Message):
 
     logger.info(f"Received file with ID: {file_id} and name: {file_name}")
 
-    # Initialize a binary buffer to store the downloaded file data
-    file_buffer = io.BytesIO()
-    downloaded_bytes = 0
-    chunk_size = 64  # 64 KB per chunk
-
     try:
         # Retrieve the file path from Telegram's servers
         file = await bot.get_file(file_id)
@@ -142,11 +146,14 @@ async def handle_document(message: types.Message):
     pre_signed_url = s3.generate_presigned_url(
         "get_object",
         Params={"Bucket": LIARA_BUCKET_NAME, "Key": unique_name},
-        ExpiresIn=12 * 60 * 60,  # 12 hours
+        ExpiresIn=1 * 60 * 60,  # 1 hour
     )
     logger.info(f"Generated pre-signed URL for '{unique_name}': {pre_signed_url}")
+    # Schedule deletion 1 hour (3600 seconds) after upload
+    deletion_delay = 3600
+    asyncio.create_task(schedule_deletion(LIARA_BUCKET_NAME, unique_name, deletion_delay))
 
-    await message.answer(f"File uploaded! Download it here (valid for 12 hours): {pre_signed_url}")
+    await message.answer(f"File uploaded! Download it here (valid for 1 hour): {pre_signed_url}")
 
 
 # Entry point
