@@ -144,17 +144,18 @@ async def start_handler(message: types.Message):
 
 # /files command handler
 @router.message(Command("files"))
-async def files_handler(message: types.Message, callback_query: CallbackQuery, user_id):
+async def files_handler(callback_query: CallbackQuery, user_id):
+
     my_session = Session()
     files = my_session.query(FileRecord).filter_by(user_id=user_id).all()
 
     if not files:
-        await message.answer("You have no uploaded files.")
+        await callback_query.message.answer("You have no uploaded files.")
     else:
         response = "Your uploaded files:\n\n"
         for file in files:
             response += f"File: {file.file_name}\nLink: {file.download_link}\nExpires: {file.expiration_time}\n\n"
-        await message.answer(response)
+        await callback_query.message.answer(response)
 
     my_session.close()
 
