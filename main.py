@@ -66,13 +66,24 @@ Base.metadata.create_all(engine)
 
 
 async def schedule_deletion(bucket_name, file_key, delay_seconds):
-    """Schedule deletion of an object after a specified delay."""
+    """Schedule deletion of an object and its database record after a specified delay."""
     await asyncio.sleep(delay_seconds)
     try:
-        # Use delete_object with Bucket and Key to delete the file
+        # Delete the file from S3 storage
         response = s3.delete_object(Bucket=bucket_name, Key=file_key)
         if response.get('ResponseMetadata', {}).get('HTTPStatusCode') == 204:
-            logger.info(f"File {file_key} deleted successfully.")
+            logger.info(f"File {file_key} deleted successfully from storage.")
+
+            # Delete the file record from the database
+            session = Session()
+            file_record = session.query(FileRecord).filter_by(unique_name=file_key).first()
+            if file_record:
+                session.delete(file_record)
+                session.commit()
+                logger.info(f"File record {file_key} deleted successfully from database.")
+            else:
+                logger.warning(f"File record {file_key} not found in database.")
+            session.close()
         else:
             logger.warning(f"File {file_key} could not be deleted. Response: {response}")
     except Exception as e:
@@ -90,8 +101,8 @@ async def start_handler(message: types.Message):
 @router.message(Command("files"))
 async def files_handler(message: types.Message):
     user_id = message.from_user.id
-    session = Session()
-    files = session.query(FileRecord).filter_by(user_id=user_id).all()
+    my_session = Session()
+    files = my_session.query(FileRecord).filter_by(user_id=user_id).all()
 
     if not files:
         await message.answer("You have no uploaded files.")
@@ -101,7 +112,7 @@ async def files_handler(message: types.Message):
             response += f"File: {file.file_name}\nLink: {file.download_link}\nExpires: {file.expiration_time}\n\n"
         await message.answer(response)
 
-    session.close()
+    my_session.close()
 
 
 # Handler for receiving files
@@ -161,7 +172,7 @@ async def handle_document(message: types.Message):
 
         # Store file record in the database
         expiration_time = datetime.utcnow() + timedelta(hours=1)
-        session = Session()
+        my_session = Session()
         file_record = FileRecord(
             user_id=message.from_user.id,
             file_name=file_name,
@@ -169,12 +180,12 @@ async def handle_document(message: types.Message):
             download_link=pre_signed_url,
             expiration_time=expiration_time
         )
-        session.add(file_record)
-        session.commit()
-        session.close()
+        my_session.add(file_record)
+        my_session.commit()
+        my_session.close()
 
         # Schedule file deletion after 1 hour
-        asyncio.create_task(schedule_deletion(LIARA_BUCKET_NAME, unique_name, 30))
+        asyncio.create_task(schedule_deletion(LIARA_BUCKET_NAME, unique_name, 3600))
 
         await message.answer(f"File uploaded! Download here (valid for 1 hour): {pre_signed_url}")
 
