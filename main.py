@@ -39,16 +39,19 @@ dp = Dispatcher()
 router = Router()
 dp.include_router(router)
 
+
 # Upload progress callback function
 def upload_progress(bytes_transferred, file_size):
     progress = (bytes_transferred / file_size) * 100
     logger.info(f"Upload progress: {progress:.2f}%")
+
 
 # Start command handler
 @router.message(Command("start"))
 async def start_handler(message: types.Message):
     logger.info("Received /start command.")
     await message.answer("Send me a file, and I'll generate a download link for it.")
+
 
 # Handler for receiving files with download and upload progress
 @router.message()
@@ -89,21 +92,26 @@ async def handle_document(message: types.Message):
 
     logger.info(f"Received file with ID: {file_id} and name: {file_name}")
 
-    # Stream the file data with progress tracking
+    # Initialize a binary buffer to store the downloaded file data
+    file_buffer = io.BytesIO()
     downloaded_bytes = 0
     chunk_size = 64 * 1024  # 64 KB per chunk
-    unique_name = f"{uuid.uuid4()}_{file_name}"
-
-    file_buffer = io.BytesIO()  # Buffer to store file data
 
     try:
-        async for chunk in bot.download(file_id, chunk_size=chunk_size):
-            file_buffer.write(chunk)
-            downloaded_bytes += len(chunk)
-            progress_percentage = (downloaded_bytes / file_size) * 100
-            logger.info(f"Download progress: {progress_percentage:.2f}%")
-            await message.answer(f"Download progress: {progress_percentage:.2f}%")
+        # Get file path from Telegram
+        file = await bot.get_file(file_id)
+        file_path = file.file_path
 
+        # Download the file in chunks with progress tracking
+        async with bot.session.get(f'https://api.telegram.org/file/bot{BOT_TOKEN}/{file_path}') as response:
+            response.raise_for_status()
+            while chunk := await response.content.read(chunk_size):
+                file_buffer.write(chunk)
+                downloaded_bytes += len(chunk)
+                download_progress = (downloaded_bytes / file_size) * 100
+                logger.info(f"Download progress: {download_progress:.2f}%")
+
+        file_buffer.seek(0)  # Rewind to the start of the buffer after download
         logger.info(f"Download completed for file '{file_name}'")
 
     except Exception as e:
@@ -111,11 +119,9 @@ async def handle_document(message: types.Message):
         await message.answer(f"Error downloading file: {str(e)}")
         return
 
-    # Reset file buffer to beginning for upload
-    file_buffer.seek(0)
-
     # Upload file to Liara with progress tracking
     try:
+        unique_name = f"{uuid.uuid4()}_{file_name}"
         logger.info(f"Uploading file '{file_name}' to Liara as '{unique_name}'")
 
         def upload_callback(bytes_transferred):
@@ -149,10 +155,12 @@ async def handle_document(message: types.Message):
 
     await message.answer(f"File uploaded! Download it here (valid for 12 hours): {pre_signed_url}")
 
+
 # Entry point
 async def main():
     logger.info("Bot is starting.")
     await dp.start_polling(bot)
+
 
 if __name__ == "__main__":
     asyncio.run(main())
