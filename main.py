@@ -144,9 +144,7 @@ async def start_handler(message: types.Message):
 
 # /files command handler
 @router.message(Command("files"))
-async def files_handler(message: types.Message):
-    print(message.from_user)
-    user_id = message.from_user.id
+async def files_handler(message: types.Message, callback_query: CallbackQuery, user_id):
     my_session = Session()
     files = my_session.query(FileRecord).filter_by(user_id=user_id).all()
 
