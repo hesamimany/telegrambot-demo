@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 from aiogram import Bot, Dispatcher, types, Router
 from aiogram.filters import Command
 from aiogram.client.session.aiohttp import AiohttpSession
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from dotenv import load_dotenv
 import boto3
 from botocore.exceptions import NoCredentialsError
@@ -63,6 +64,47 @@ class FileRecord(Base):
 
 
 Base.metadata.create_all(engine)
+
+# Define the inline keyboard
+def main_menu_keyboard():
+    keyboard = InlineKeyboardMarkup()
+    keyboard.add(
+        InlineKeyboardButton(text="Show Files", callback_data="show_files"),
+        InlineKeyboardButton(text="Show Owner (About)", callback_data="show_about")
+    )
+    return keyboard
+
+# Update /start command to show buttons
+@router.message(Command("start"))
+async def start_handler(message: types.Message):
+    logger.info("Received /start command.")
+    await message.answer(
+        "Welcome! Use the buttons below to access various functions.",
+        reply_markup=main_menu_keyboard()
+    )
+
+# Implement the /help command
+@router.message(Command("help"))
+async def help_handler(message: types.Message):
+    await message.answer(
+        "Here are the available commands:\n"
+        "/files - View uploaded files\n"
+        "/about - Information about this bot"
+    )
+
+# Implement /about command
+@router.message(Command("about"))
+async def about_handler(message: types.Message):
+    await message.answer("This bot allows users to upload files, get temporary download links, and view uploaded files.")
+
+# Handle button clicks
+@router.callback_query(lambda call: call.data in ["show_files", "show_about"])
+async def callback_handler(callback_query: types.CallbackQuery):
+    if callback_query.data == "show_files":
+        await files_handler(callback_query.message)
+    elif callback_query.data == "show_about":
+        await about_handler(callback_query.message)
+    await callback_query.answer()  # Acknowledge the callback
 
 
 async def schedule_deletion(bucket_name, file_key, delay_seconds):
