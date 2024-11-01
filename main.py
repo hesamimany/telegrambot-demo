@@ -3,16 +3,14 @@ import os
 import uuid
 import asyncio
 import logging
+import io
 
 from aiogram import Bot, Dispatcher, types, Router
-from aiogram.types import ContentType
-from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.filters import Command
 from dotenv import load_dotenv
 import boto3
 from botocore.exceptions import NoCredentialsError
 from botocore.client import Config
-from urllib.parse import quote
 
 # Load environment variables
 load_dotenv()
@@ -37,13 +35,13 @@ s3 = boto3.client(
 
 # Initialize Bot and Dispatcher
 bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher(storage=MemoryStorage())
+dp = Dispatcher()
 router = Router()
 dp.include_router(router)
 
-# Progress callback function
-def upload_progress(chunk, total_chunks, total_size):
-    progress = (total_chunks * chunk) / total_size * 100
+# Upload progress callback function
+def upload_progress(bytes_transferred, file_size):
+    progress = (bytes_transferred / file_size) * 100
     logger.info(f"Upload progress: {progress:.2f}%")
 
 # Start command handler
@@ -52,37 +50,83 @@ async def start_handler(message: types.Message):
     logger.info("Received /start command.")
     await message.answer("Send me a file, and I'll generate a download link for it.")
 
-# Handler for receiving documents (files)
+# Handler for receiving files with download and upload progress
 @router.message()
 async def handle_document(message: types.Message):
-    # Check if the message contains a document
-    if not message.document:
-        logger.warning("Received message without document.")
-        await message.answer("Please send a file.")
+    file_id = None
+    file_name = None
+    file_size = None
+
+    # Identify the file type and set file_id, file_name, and file_size
+    if message.document:
+        file_id = message.document.file_id
+        file_name = message.document.file_name
+        file_size = message.document.file_size
+    elif message.photo:
+        file_id = message.photo[-1].file_id  # Use the highest resolution photo
+        file_name = f"photo_{uuid.uuid4()}.jpg"
+        file_size = message.photo[-1].file_size
+    elif message.audio:
+        file_id = message.audio.file_id
+        file_name = message.audio.file_name or f"audio_{uuid.uuid4()}.mp3"
+        file_size = message.audio.file_size
+    elif message.video:
+        file_id = message.video.file_id
+        file_name = message.video.file_name or f"video_{uuid.uuid4()}.mp4"
+        file_size = message.video.file_size
+    elif message.voice:
+        file_id = message.voice.file_id
+        file_name = f"voice_{uuid.uuid4()}.ogg"
+        file_size = message.voice.file_size
+    elif message.animation:
+        file_id = message.animation.file_id
+        file_name = message.animation.file_name or f"animation_{uuid.uuid4()}.gif"
+        file_size = message.animation.file_size
+    else:
+        logger.warning("Unsupported file type received.")
+        await message.answer("Please send a supported file type.")
         return
 
-    file_id = message.document.file_id
-    file_name = message.document.file_name
-    logger.info(f"Received document with ID: {file_id} and name: {file_name}")
+    logger.info(f"Received file with ID: {file_id} and name: {file_name}")
 
-    # Download the file
-    file = await bot.download(file_id)
+    # Stream the file data with progress tracking
+    downloaded_bytes = 0
+    chunk_size = 64 * 1024  # 64 KB per chunk
     unique_name = f"{uuid.uuid4()}_{file_name}"
 
+    file_buffer = io.BytesIO()  # Buffer to store file data
+
     try:
-        # Log the start of the upload
+        async for chunk in bot.download(file_id, chunk_size=chunk_size):
+            file_buffer.write(chunk)
+            downloaded_bytes += len(chunk)
+            progress_percentage = (downloaded_bytes / file_size) * 100
+            logger.info(f"Download progress: {progress_percentage:.2f}%")
+            await message.answer(f"Download progress: {progress_percentage:.2f}%")
+
+        logger.info(f"Download completed for file '{file_name}'")
+
+    except Exception as e:
+        logger.error(f"Error downloading file: {e}")
+        await message.answer(f"Error downloading file: {str(e)}")
+        return
+
+    # Reset file buffer to beginning for upload
+    file_buffer.seek(0)
+
+    # Upload file to Liara with progress tracking
+    try:
         logger.info(f"Uploading file '{file_name}' to Liara as '{unique_name}'")
 
-        # Upload file with progress logging
+        def upload_callback(bytes_transferred):
+            upload_progress(bytes_transferred, file_size)
+
+        # Upload the file with progress callback
         s3.upload_fileobj(
-            file,
+            file_buffer,
             LIARA_BUCKET_NAME,
             unique_name,
-            Callback=lambda bytes_transferred: upload_progress(
-                bytes_transferred,
-                file.tell(),
-                message.document.file_size
-            ),
+            Callback=upload_callback
         )
         logger.info(f"Upload completed for file '{unique_name}'")
 
