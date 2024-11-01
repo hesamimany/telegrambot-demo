@@ -104,15 +104,41 @@ async def files_handler(message: types.Message):
 # Handler for receiving files
 @router.message()
 async def handle_document(message: types.Message):
-    file_id, file_name, file_size = None, None, None
+    file_id = None
+    file_name = None
+    file_size = None
 
+    # Identify the file type and set file_id, file_name, and file_size
     if message.document:
         file_id = message.document.file_id
         file_name = message.document.file_name
         file_size = message.document.file_size
+    elif message.photo:
+        file_id = message.photo[-1].file_id  # Use the highest resolution photo
+        file_name = f"photo_{uuid.uuid4()}.jpg"
+        file_size = message.photo[-1].file_size
+    elif message.audio:
+        file_id = message.audio.file_id
+        file_name = message.audio.file_name or f"audio_{uuid.uuid4()}.mp3"
+        file_size = message.audio.file_size
+    elif message.video:
+        file_id = message.video.file_id
+        file_name = message.video.file_name or f"video_{uuid.uuid4()}.mp4"
+        file_size = message.video.file_size
+    elif message.voice:
+        file_id = message.voice.file_id
+        file_name = f"voice_{uuid.uuid4()}.ogg"
+        file_size = message.voice.file_size
+    elif message.animation:
+        file_id = message.animation.file_id
+        file_name = message.animation.file_name or f"animation_{uuid.uuid4()}.gif"
+        file_size = message.animation.file_size
     else:
-        await message.answer("Please send a valid document.")
+        logger.warning("Unsupported file type received.")
+        await message.answer("Please send a supported file type.")
         return
+
+    logger.info(f"Received file with ID: {file_id} and name: {file_name}")
 
     try:
         file = await bot.get_file(file_id)
