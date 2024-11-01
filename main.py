@@ -67,11 +67,10 @@ Base.metadata.create_all(engine)
 
 # Define the inline keyboard
 def main_menu_keyboard():
-    keyboard = InlineKeyboardMarkup()
-    keyboard.add(
-        InlineKeyboardButton(text="Show Files", callback_data="show_files"),
-        InlineKeyboardButton(text="Show Owner (About)", callback_data="show_about")
-    )
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Show Files", callback_data="show_files")],
+        [InlineKeyboardButton(text="Show Owner (About)", callback_data="show_about")]
+    ])
     return keyboard
 
 # Update /start command to show buttons
