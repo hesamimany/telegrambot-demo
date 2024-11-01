@@ -4,6 +4,7 @@ import uuid
 import asyncio
 import logging
 import io
+from datetime import datetime, timedelta
 
 from aiogram import Bot, Dispatcher, types, Router
 from aiogram.filters import Command
@@ -12,6 +13,9 @@ from dotenv import load_dotenv
 import boto3
 from botocore.exceptions import NoCredentialsError
 from botocore.client import Config
+from sqlalchemy import create_engine, Column, Integer, String, DateTime
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker
 
 # Load environment variables
 load_dotenv()
@@ -25,7 +29,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 logging.basicConfig(level=logging.INFO, stream=sys.stdout)
 logger = logging.getLogger(__name__)
 
-# Initialize S3 client with progress tracking
+# Initialize S3 client
 s3 = boto3.client(
     "s3",
     endpoint_url=LIARA_ENDPOINT,
@@ -41,20 +45,35 @@ dp = Dispatcher()
 router = Router()
 dp.include_router(router)
 
+# Database setup
+DATABASE_URL = 'sqlite:///file_links.db'
+Base = declarative_base()
+engine = create_engine(DATABASE_URL)
+Session = sessionmaker(bind=engine)
+
+
+class FileRecord(Base):
+    __tablename__ = 'files'
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, index=True)
+    file_name = Column(String)
+    unique_name = Column(String)
+    download_link = Column(String)
+    expiration_time = Column(DateTime)
+
+
+Base.metadata.create_all(engine)
+
+
 async def schedule_deletion(bucket_name, file_key, delay_seconds):
     """Schedule deletion of an object after a specified delay."""
     await asyncio.sleep(delay_seconds)
     try:
         obj = s3.Object(bucket_name, file_key)
         obj.delete()
-        print(f"File {file_key} deleted successfully.")
+        logger.info(f"File {file_key} deleted successfully.")
     except Exception as e:
-        print(f"Error deleting file {file_key}: {e}")
-
-# Upload progress callback function
-def upload_progress(bytes_transferred, file_size):
-    progress = (bytes_transferred / file_size) * 100
-    logger.info(f"Upload progress: {progress:.2f}%")
+        logger.error(f"Error deleting file {file_key}: {e}")
 
 
 # Start command handler
@@ -64,96 +83,78 @@ async def start_handler(message: types.Message):
     await message.answer("Send me a file, and I'll generate a download link for it.")
 
 
-# Handler for receiving files with download and upload progress
+# /files command handler
+@router.message(Command("files"))
+async def files_handler(message: types.Message):
+    user_id = message.from_user.id
+    session = Session()
+    files = session.query(FileRecord).filter_by(user_id=user_id).all()
+
+    if not files:
+        await message.answer("You have no uploaded files.")
+    else:
+        response = "Your uploaded files:\n\n"
+        for file in files:
+            response += f"File: {file.file_name}\nLink: {file.download_link}\nExpires: {file.expiration_time}\n\n"
+        await message.answer(response)
+
+    session.close()
+
+
+# Handler for receiving files
 @router.message()
 async def handle_document(message: types.Message):
-    file_id = None
-    file_name = None
-    file_size = None
+    file_id, file_name, file_size = None, None, None
 
-    # Identify the file type and set file_id, file_name, and file_size
     if message.document:
         file_id = message.document.file_id
         file_name = message.document.file_name
         file_size = message.document.file_size
-    elif message.photo:
-        file_id = message.photo[-1].file_id  # Use the highest resolution photo
-        file_name = f"photo_{uuid.uuid4()}.jpg"
-        file_size = message.photo[-1].file_size
-    elif message.audio:
-        file_id = message.audio.file_id
-        file_name = message.audio.file_name or f"audio_{uuid.uuid4()}.mp3"
-        file_size = message.audio.file_size
-    elif message.video:
-        file_id = message.video.file_id
-        file_name = message.video.file_name or f"video_{uuid.uuid4()}.mp4"
-        file_size = message.video.file_size
-    elif message.voice:
-        file_id = message.voice.file_id
-        file_name = f"voice_{uuid.uuid4()}.ogg"
-        file_size = message.voice.file_size
-    elif message.animation:
-        file_id = message.animation.file_id
-        file_name = message.animation.file_name or f"animation_{uuid.uuid4()}.gif"
-        file_size = message.animation.file_size
     else:
-        logger.warning("Unsupported file type received.")
-        await message.answer("Please send a supported file type.")
+        await message.answer("Please send a valid document.")
         return
 
-    logger.info(f"Received file with ID: {file_id} and name: {file_name}")
-
     try:
-        # Retrieve the file path from Telegram's servers
         file = await bot.get_file(file_id)
-        file_path = file.file_path
+        file_buffer = await bot.download_file(file.file_path)
 
-        # Download the file from Telegram
-        file_buffer = await bot.download_file(file_path)
-
-    except Exception as e:
-        logger.error(f"Error downloading file: {e}")
-        await message.answer(f"Error downloading file: {str(e)}")
-        return
-
-    # Upload file to Liara with progress tracking
-    try:
+        # Generate unique file name and upload to Liara
         unique_name = f"{uuid.uuid4()}_{file_name}"
-        logger.info(f"Uploading file '{file_name}' to Liara as '{unique_name}'")
+        s3.upload_fileobj(file_buffer, LIARA_BUCKET_NAME, unique_name)
+        logger.info(f"Uploaded '{file_name}' as '{unique_name}'")
 
-        def upload_callback(bytes_transferred):
-            upload_progress(bytes_transferred, file_size)
-
-        # Upload the file with progress callback
-        s3.upload_fileobj(
-            file_buffer,
-            LIARA_BUCKET_NAME,
-            unique_name,
-            Callback=upload_callback
+        # Generate a pre-signed URL valid for 1 hour
+        pre_signed_url = s3.generate_presigned_url(
+            "get_object",
+            Params={"Bucket": LIARA_BUCKET_NAME, "Key": unique_name},
+            ExpiresIn=3600
         )
-        logger.info(f"Upload completed for file '{unique_name}'")
+
+        # Store file record in the database
+        expiration_time = datetime.utcnow() + timedelta(hours=1)
+        session = Session()
+        file_record = FileRecord(
+            user_id=message.from_user.id,
+            file_name=file_name,
+            unique_name=unique_name,
+            download_link=pre_signed_url,
+            expiration_time=expiration_time
+        )
+        session.add(file_record)
+        session.commit()
+        session.close()
+
+        # Schedule file deletion after 1 hour
+        asyncio.create_task(schedule_deletion(LIARA_BUCKET_NAME, unique_name, 3600))
+
+        await message.answer(f"File uploaded! Download here (valid for 1 hour): {pre_signed_url}")
 
     except NoCredentialsError:
         logger.error("No credentials found for Object Storage.")
         await message.answer("Error: Invalid credentials for Object Storage.")
-        return
     except Exception as e:
         logger.error(f"Error uploading file: {e}")
         await message.answer(f"Error uploading file: {str(e)}")
-        return
-
-    # Generate a temporary download link (12 hours)
-    pre_signed_url = s3.generate_presigned_url(
-        "get_object",
-        Params={"Bucket": LIARA_BUCKET_NAME, "Key": unique_name},
-        ExpiresIn=1 * 60 * 60,  # 1 hour
-    )
-    logger.info(f"Generated pre-signed URL for '{unique_name}': {pre_signed_url}")
-    # Schedule deletion 1 hour (3600 seconds) after upload
-    deletion_delay = 3600
-    asyncio.create_task(schedule_deletion(LIARA_BUCKET_NAME, unique_name, deletion_delay))
-
-    await message.answer(f"File uploaded! Download it here (valid for 1 hour): {pre_signed_url}")
 
 
 # Entry point
