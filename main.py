@@ -79,7 +79,7 @@ def main_menu_keyboard(user_id):
 async def start_handler(message: types.Message):
     user_id = message.from_user.id
     logger.info("Received /start command.")
-    await message.answer("Choose an option:", reply_markup=main_menu_keyboard(user_id))
+    await message.answer("Send me a file, and I'll generate a download link for it or choose an option: ", reply_markup=main_menu_keyboard(user_id))
 
 # Implement the /help command
 @router.message(Command("help"))
@@ -133,14 +133,6 @@ async def schedule_deletion(bucket_name, file_key, delay_seconds):
             logger.warning(f"File {file_key} could not be deleted. Response: {response}")
     except Exception as e:
         logger.error(f"Error deleting file {file_key}: {e}")
-
-
-# Start command handler
-@router.message(Command("start"))
-async def start_handler(message: types.Message):
-    logger.info("Received /start command.")
-    await message.answer("Send me a file, and I'll generate a download link for it.")
-
 
 # /files command handler
 @router.message(Command("files"))
