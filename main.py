@@ -97,25 +97,15 @@ async def handle_document(message: types.Message):
     # Initialize a binary buffer to store the downloaded file data
     file_buffer = io.BytesIO()
     downloaded_bytes = 0
-    chunk_size = 64 * 1024  # 64 KB per chunk
+    chunk_size = 64  # 64 KB per chunk
 
     try:
-        # Get file path from Telegram
+        # Retrieve the file path from Telegram's servers
         file = await bot.get_file(file_id)
         file_path = file.file_path
-        url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_path}"
 
-        # Download the file in chunks with progress tracking
-        async with bot.session.make_request("GET", url) as response:
-            response.raise_for_status()
-            while chunk := await response.content.read(chunk_size):
-                file_buffer.write(chunk)
-                downloaded_bytes += len(chunk)
-                download_progress = (downloaded_bytes / file_size) * 100
-                logger.info(f"Download progress: {download_progress:.2f}%")
-
-        file_buffer.seek(0)  # Rewind to the start of the buffer after download
-        logger.info(f"Download completed for file '{file_name}'")
+        # Download the file from Telegram
+        file_buffer = await bot.download_file(file_path)
 
     except Exception as e:
         logger.error(f"Error downloading file: {e}")
