@@ -69,9 +69,12 @@ async def schedule_deletion(bucket_name, file_key, delay_seconds):
     """Schedule deletion of an object after a specified delay."""
     await asyncio.sleep(delay_seconds)
     try:
-        obj = s3.Object(bucket_name, file_key)
-        obj.delete()
-        logger.info(f"File {file_key} deleted successfully.")
+        # Use delete_object with Bucket and Key to delete the file
+        response = s3.delete_object(Bucket=bucket_name, Key=file_key)
+        if response.get('ResponseMetadata', {}).get('HTTPStatusCode') == 204:
+            logger.info(f"File {file_key} deleted successfully.")
+        else:
+            logger.warning(f"File {file_key} could not be deleted. Response: {response}")
     except Exception as e:
         logger.error(f"Error deleting file {file_key}: {e}")
 
@@ -171,7 +174,7 @@ async def handle_document(message: types.Message):
         session.close()
 
         # Schedule file deletion after 1 hour
-        asyncio.create_task(schedule_deletion(LIARA_BUCKET_NAME, unique_name, 3600))
+        asyncio.create_task(schedule_deletion(LIARA_BUCKET_NAME, unique_name, 30))
 
         await message.answer(f"File uploaded! Download here (valid for 1 hour): {pre_signed_url}")
 
